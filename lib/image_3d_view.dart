@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'dart:math' as math;
 import 'dart:async';
@@ -40,21 +41,14 @@ class _Image3DViewState extends State<Image3DView>
     (index) => 'assets/img/${index + 1}.jpg',
   );
 
-  // List of background images (10 images)
+  // List of background images (10 images with .JPG extension)
   final List<String> _bgPaths = List.generate(
     10,
-    (index) => 'assets/bg/${index + 1}.jpg',
+    (index) => 'assets/bg/${index + 1}.JPG',
   );
 
-  // Album images (full album slideshow)
-  // NOTE: Update this list to match files you put in assets/images/
-  final List<String> _albumImages = const [
-    'assets/images/1.jpg',
-    'assets/images/2.jpg',
-    'assets/images/3.jpg',
-    'assets/images/4.jpg',
-    'assets/images/5.jpg',
-  ];
+  // Album images (full album slideshow) - loaded dynamically from assets/images/
+  List<String> _albumImages = [];
 
   // Audio URLs (you can replace with your own URLs)
   final List<String> _audioUrls = [
@@ -86,6 +80,9 @@ class _Image3DViewState extends State<Image3DView>
       vsync: this,
     );
 
+    // Load album images from assets
+    _loadAlbumImages();
+
     // Start background slideshow timer
     _startBackgroundTimer();
 
@@ -94,6 +91,36 @@ class _Image3DViewState extends State<Image3DView>
 
     // Auto toggle shape every 8 seconds
     _startAutoToggle();
+  }
+
+  /// Load album images dynamically from AssetManifest
+  Future<void> _loadAlbumImages() async {
+    try {
+      // Use AssetManifest API (works with both .json and .bin formats)
+      final assetManifest = await AssetManifest.loadFromAssetBundle(rootBundle);
+      final allAssets = assetManifest.listAssets();
+
+      // Filter for images in assets/images/ folder
+      final images = allAssets
+          .where((path) =>
+              path.startsWith('assets/images/') &&
+              (path.toLowerCase().endsWith('.jpg') ||
+                  path.toLowerCase().endsWith('.jpeg') ||
+                  path.toLowerCase().endsWith('.png') ||
+                  path.toLowerCase().endsWith('.gif') ||
+                  path.toLowerCase().endsWith('.webp')))
+          .toList();
+
+      // Sort images by name
+      images.sort();
+
+      setState(() {
+        _albumImages = images;
+      });
+    } catch (e) {
+      // ignore: avoid_print
+      print('Error loading album images: $e');
+    }
   }
 
   void _startBackgroundTimer() {
@@ -140,25 +167,28 @@ class _Image3DViewState extends State<Image3DView>
     });
   }
 
-  void _initAudioPlayer() async {
-    // Select random audio
+  void _initAudioPlayer() {
+    // Select random audio index (don't auto-play on web due to browser restrictions)
     _currentAudioIndex = math.Random().nextInt(_audioUrls.length);
-    await _playAudio(_audioUrls[_currentAudioIndex]);
 
-    // Listen for audio completion
+    // Listen for audio completion to play next track
     _audioPlayer.onPlayerComplete.listen((event) {
       _playNextAudio();
     });
   }
 
-  Future<void> _playAudio(String url) async {
+  Future<void> _playAudio(String assetPath) async {
     try {
-      await _audioPlayer.play(UrlSource(url));
+      // Remove 'assets/' prefix for AssetSource (audioplayers expects path relative to assets folder)
+      final path = assetPath.startsWith('assets/')
+          ? assetPath.substring(7)
+          : assetPath;
+      await _audioPlayer.play(AssetSource(path));
       setState(() {
         _isPlaying = true;
       });
     } catch (e) {
-      // Audio might not be available or blocked (for example by CORS)
+      // Audio might not be available
       // Just print error to debug console
       // In production you should handle this state in UI
       // ignore: avoid_print
@@ -244,10 +274,8 @@ class _Image3DViewState extends State<Image3DView>
                                   _isPlaying = false;
                                 });
                               } else {
-                                await _audioPlayer.resume();
-                                setState(() {
-                                  _isPlaying = true;
-                                });
+                                // Play current track (handles both first play and resume)
+                                await _playAudio(_audioUrls[_currentAudioIndex]);
                               }
                             },
                           ),
