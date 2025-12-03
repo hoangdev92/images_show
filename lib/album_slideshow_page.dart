@@ -46,7 +46,7 @@ class _AlbumSlideshowPageState extends State<AlbumSlideshowPage> {
     _autoPlayTimer?.cancel();
     if (widget.imagePaths.length <= 1 || !_isAutoPlaying) return;
     
-    _autoPlayTimer = Timer.periodic(const Duration(seconds: 4), (timer) {
+    _autoPlayTimer = Timer.periodic(const Duration(seconds: 15), (timer) {
       if (!mounted || !_isAutoPlaying) return;
       final nextIndex = (_currentIndex + 1) % widget.imagePaths.length;
       _pageController.animateToPage(
