@@ -1,10 +1,7 @@
 import 'dart:async';
-
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 
 /// Page to show full album as a slideshow with lazy loading.
-/// Optimized for mobile and web performance.
 class AlbumSlideshowPage extends StatefulWidget {
   const AlbumSlideshowPage({super.key, required this.imagePaths});
 
@@ -18,20 +15,38 @@ class _AlbumSlideshowPageState extends State<AlbumSlideshowPage> {
   late final PageController _pageController;
   Timer? _autoPlayTimer;
   int _currentIndex = 0;
-  bool _isAutoPlaying = true;
+  bool _isAutoPlaying = true; // Auto-play enabled by default
+
+  // Track which images are loaded
+  final Set<int> _loadedImages = {};
 
   @override
   void initState() {
     super.initState();
-    _pageController = PageController(viewportFraction: 0.85);
+    _pageController = PageController();
+    // Pre-load first few images
+    _preloadNearbyImages(0);
+    // Start auto-play
     _startAutoPlay();
+  }
+
+  /// Preload images near current index (±3 images)
+  void _preloadNearbyImages(int index) {
+    final start = (index - 3).clamp(0, widget.imagePaths.length - 1);
+    final end = (index + 3).clamp(0, widget.imagePaths.length - 1);
+    
+    for (int i = start; i <= end; i++) {
+      if (!_loadedImages.contains(i)) {
+        _loadedImages.add(i);
+      }
+    }
   }
 
   void _startAutoPlay() {
     _autoPlayTimer?.cancel();
     if (widget.imagePaths.length <= 1 || !_isAutoPlaying) return;
     
-    _autoPlayTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+    _autoPlayTimer = Timer.periodic(const Duration(seconds: 4), (timer) {
       if (!mounted || !_isAutoPlaying) return;
       final nextIndex = (_currentIndex + 1) % widget.imagePaths.length;
       _pageController.animateToPage(
@@ -42,14 +57,23 @@ class _AlbumSlideshowPageState extends State<AlbumSlideshowPage> {
     });
   }
 
-  void _stopAutoPlay() {
-    _autoPlayTimer?.cancel();
-    setState(() => _isAutoPlaying = false);
+  void _toggleAutoPlay() {
+    setState(() {
+      _isAutoPlaying = !_isAutoPlaying;
+    });
+    if (_isAutoPlaying) {
+      _startAutoPlay();
+    } else {
+      _autoPlayTimer?.cancel();
+    }
   }
 
-  void _resumeAutoPlay() {
-    setState(() => _isAutoPlaying = true);
-    _startAutoPlay();
+  void _onPageChanged(int index) {
+    setState(() {
+      _currentIndex = index;
+    });
+    // Lazy load nearby images when page changes
+    _preloadNearbyImages(index);
   }
 
   @override
@@ -61,219 +85,148 @@ class _AlbumSlideshowPageState extends State<AlbumSlideshowPage> {
 
   @override
   Widget build(BuildContext context) {
-    final screenSize = MediaQuery.of(context).size;
-    final isMobile = screenSize.width < 600;
-
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        title: Text('Album (${widget.imagePaths.length} ảnh)'),
+        title: Text('${_currentIndex + 1} / ${widget.imagePaths.length}'),
         backgroundColor: Colors.black,
+        centerTitle: true,
         actions: [
-          // Toggle auto-play button
+          // Auto-play toggle
           IconButton(
-            icon: Icon(_isAutoPlaying ? Icons.pause : Icons.play_arrow),
-            onPressed: _isAutoPlaying ? _stopAutoPlay : _resumeAutoPlay,
+            icon: Icon(
+              _isAutoPlaying ? Icons.pause_circle : Icons.play_circle,
+              size: 28,
+            ),
+            onPressed: _toggleAutoPlay,
             tooltip: _isAutoPlaying ? 'Dừng tự động' : 'Tự động chạy',
           ),
         ],
       ),
-      body: Column(
-        children: [
-          // Image counter
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Text(
-              '${_currentIndex + 1} / ${widget.imagePaths.length}',
-              style: const TextStyle(color: Colors.white70, fontSize: 14),
-            ),
-          ),
-          // Image slideshow
-          Expanded(
-            child: GestureDetector(
-              onPanDown: (_) => _stopAutoPlay(),
-              child: PageView.builder(
-                controller: _pageController,
-                itemCount: widget.imagePaths.length,
-                onPageChanged: (index) {
-                  setState(() => _currentIndex = index);
-                },
-                itemBuilder: (context, index) {
-                  return _ImageCard(
-                    imagePath: widget.imagePaths[index],
-                    index: index,
-                    isMobile: isMobile,
-                    pageController: _pageController,
-                  );
-                },
-              ),
-            ),
-          ),
-          // Thumbnail strip (only show on larger screens)
-          if (!isMobile && widget.imagePaths.length <= 50)
-            SizedBox(
-              height: 60,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                itemCount: widget.imagePaths.length,
-                itemBuilder: (context, index) {
-                  final isSelected = index == _currentIndex;
-                  return GestureDetector(
-                    onTap: () {
-                      _stopAutoPlay();
-                      _pageController.animateToPage(
-                        index,
-                        duration: const Duration(milliseconds: 300),
-                        curve: Curves.easeInOut,
-                      );
-                    },
-                    child: Container(
-                      width: 50,
-                      margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
-                      decoration: BoxDecoration(
-                        border: Border.all(
-                          color: isSelected ? Colors.white : Colors.transparent,
-                          width: 2,
-                        ),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
-                        child: Image.asset(
-                          widget.imagePaths[index],
-                          fit: BoxFit.cover,
-                          cacheWidth: 100,
-                          cacheHeight: 100,
-                          errorBuilder: (_, __, ___) => Container(
-                            color: Colors.grey[800],
-                          ),
-                        ),
+      body: PageView.builder(
+        controller: _pageController,
+        itemCount: widget.imagePaths.length,
+        onPageChanged: _onPageChanged,
+        itemBuilder: (context, index) {
+          // Only build image if it's near current position
+          final shouldLoad = _loadedImages.contains(index) ||
+              (index - _currentIndex).abs() <= 3;
+
+          if (!shouldLoad) {
+            return const Center(
+              child: CircularProgressIndicator(color: Colors.white54),
+            );
+          }
+
+          return GestureDetector(
+            onTap: () => _openFullscreen(index),
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 16),
+              child: Image.asset(
+                widget.imagePaths[index],
+                fit: BoxFit.contain,
+                // Higher quality - no cacheWidth limit for sharp images
+                frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+                  if (wasSynchronouslyLoaded || frame != null) {
+                    return child;
+                  }
+                  return Container(
+                    color: Colors.grey[900],
+                    child: const Center(
+                      child: CircularProgressIndicator(
+                        color: Colors.white54,
+                        strokeWidth: 2,
                       ),
                     ),
-                  );
-                },
-              ),
-            ),
-          const SizedBox(height: 10),
-        ],
-      ),
-    );
-  }
-}
-
-/// Optimized image card with lazy loading and error handling
-class _ImageCard extends StatelessWidget {
-  final String imagePath;
-  final int index;
-  final bool isMobile;
-  final PageController pageController;
-
-  const _ImageCard({
-    required this.imagePath,
-    required this.index,
-    required this.isMobile,
-    required this.pageController,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: pageController,
-      builder: (context, child) {
-        double scale = 1.0;
-        if (pageController.position.haveDimensions) {
-          final currentPage = pageController.page ?? pageController.initialPage.toDouble();
-          final diff = (currentPage - index).abs();
-          scale = (1 - (diff * 0.15)).clamp(0.85, 1.0);
-        }
-        return Center(
-          child: Transform.scale(scale: scale, child: child),
-        );
-      },
-      child: GestureDetector(
-        onTap: () {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => FullscreenImagePage(
-                imagePath: imagePath,
-                heroTag: 'album-image-$index',
-              ),
-            ),
-          );
-        },
-        child: Hero(
-          tag: 'album-image-$index',
-          child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 16),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.5),
-                  blurRadius: 10,
-                  offset: const Offset(0, 5),
-                ),
-              ],
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: Image.asset(
-                imagePath,
-                fit: BoxFit.contain,
-                // Reduce image size for performance
-                cacheWidth: kIsWeb || isMobile ? 600 : 1000,
-                frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-                  if (wasSynchronouslyLoaded) return child;
-                  return AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 300),
-                    child: frame != null
-                        ? child
-                        : Container(
-                            color: Colors.grey[900],
-                            child: const Center(
-                              child: CircularProgressIndicator(
-                                color: Colors.white54,
-                                strokeWidth: 2,
-                              ),
-                            ),
-                          ),
                   );
                 },
                 errorBuilder: (context, error, stackTrace) {
                   return Container(
                     color: Colors.grey[900],
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(Icons.broken_image, color: Colors.white54, size: 48),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Không tải được ảnh',
-                          style: TextStyle(color: Colors.grey[500], fontSize: 12),
-                        ),
-                      ],
+                    child: const Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.broken_image, color: Colors.white54, size: 48),
+                          SizedBox(height: 8),
+                          Text(
+                            'Không tải được ảnh',
+                            style: TextStyle(color: Colors.grey, fontSize: 12),
+                          ),
+                        ],
+                      ),
                     ),
                   );
                 },
               ),
             ),
-          ),
+          );
+        },
+      ),
+      // Bottom navigation
+      bottomNavigationBar: Container(
+        color: Colors.black,
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // Previous button
+            IconButton(
+              icon: const Icon(Icons.arrow_back_ios, color: Colors.white),
+              onPressed: _currentIndex > 0
+                  ? () {
+                      _autoPlayTimer?.cancel();
+                      _pageController.previousPage(
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeOut,
+                      );
+                      if (_isAutoPlaying) _startAutoPlay();
+                    }
+                  : null,
+            ),
+            const SizedBox(width: 40),
+            // Next button
+            IconButton(
+              icon: const Icon(Icons.arrow_forward_ios, color: Colors.white),
+              onPressed: _currentIndex < widget.imagePaths.length - 1
+                  ? () {
+                      _autoPlayTimer?.cancel();
+                      _pageController.nextPage(
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeOut,
+                      );
+                      if (_isAutoPlaying) _startAutoPlay();
+                    }
+                  : null,
+            ),
+          ],
         ),
       ),
     );
   }
+
+  void _openFullscreen(int index) {
+    // Pause auto-play when viewing fullscreen
+    _autoPlayTimer?.cancel();
+    
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _FullscreenImagePage(
+          imagePath: widget.imagePaths[index],
+        ),
+      ),
+    ).then((_) {
+      // Resume auto-play when returning
+      if (_isAutoPlaying) _startAutoPlay();
+    });
+  }
 }
 
-/// Full screen image view with zoom support
-class FullscreenImagePage extends StatelessWidget {
-  const FullscreenImagePage({
-    super.key,
-    required this.imagePath,
-    required this.heroTag,
-  });
+/// Fullscreen view with zoom
+class _FullscreenImagePage extends StatelessWidget {
+  const _FullscreenImagePage({required this.imagePath});
 
   final String imagePath;
-  final String heroTag;
 
   @override
   Widget build(BuildContext context) {
@@ -285,28 +238,18 @@ class FullscreenImagePage extends StatelessWidget {
       ),
       extendBodyBehindAppBar: true,
       body: Center(
-        child: Hero(
-          tag: heroTag,
-          child: InteractiveViewer(
-            minScale: 0.5,
-            maxScale: 4.0,
-            child: Image.asset(
-              imagePath,
-              fit: BoxFit.contain,
-              errorBuilder: (context, error, stackTrace) {
-                return Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.broken_image, color: Colors.white54, size: 64),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Không tải được ảnh',
-                      style: TextStyle(color: Colors.grey[500]),
-                    ),
-                  ],
-                );
-              },
-            ),
+        child: InteractiveViewer(
+          minScale: 0.5,
+          maxScale: 5.0,
+          child: Image.asset(
+            imagePath,
+            fit: BoxFit.contain,
+            // Full resolution for zooming
+            errorBuilder: (context, error, stackTrace) {
+              return const Center(
+                child: Icon(Icons.broken_image, color: Colors.white54, size: 64),
+              );
+            },
           ),
         ),
       ),

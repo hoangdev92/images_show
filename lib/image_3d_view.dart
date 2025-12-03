@@ -303,6 +303,10 @@ class _Image3DViewState extends State<Image3DView>
           onPressed: _albumLoading || _albumImages.isEmpty
               ? null
               : () {
+                  // Play music if not already playing
+                  if (!_isPlaying) {
+                    _playAudio(_audioUrls[_currentAudioIndex]);
+                  }
                   Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => AlbumSlideshowPage(imagePaths: _albumImages),
